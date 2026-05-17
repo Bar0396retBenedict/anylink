@@ -19,11 +19,12 @@ var (
 
 func main() {
 	var (
-		confFile string
+		confFile    string
 		showVersion bool
 	)
 
-	flag.StringVar(&confFile, "c", "conf/server.toml", "config file path")
+	// Default config path changed to match my local directory layout
+	flag.StringVar(&confFile, "c", "config/server.toml", "config file path")
 	flag.BoolVar(&showVersion, "v", false, "show version")
 	flag.Parse()
 
@@ -34,7 +35,7 @@ func main() {
 
 	// Initialize logger
 	logrus.SetFormatter(&logrus.TextFormatter{
-		FullTimestamp: true,
+		FullTimestamp:   true,
 		TimestampFormat: "2006-01-02 15:04:05",
 	})
 	logrus.SetOutput(os.Stdout)
