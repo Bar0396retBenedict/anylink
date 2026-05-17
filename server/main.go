@@ -1,60 +1,81 @@
-// AnyLink 是一个企业级远程办公vpn软件，可以支持多人同时在线使用。
-
-//go:build !windows
-// +build !windows
-
 package main
 
 import (
-	"embed"
+	"flag"
+	"fmt"
 	"os"
 	"os/signal"
 	"syscall"
 
-	"github.com/bjdgyc/anylink/admin"
-	"github.com/bjdgyc/anylink/base"
-	"github.com/bjdgyc/anylink/handler"
+	"github.com/sirupsen/logrus"
 )
 
-//go:embed ui
-var uiData embed.FS
-
-// 程序版本
 var (
-	appVer    string
-	commitId  string
-	buildDate string
+	// Version is set at build time via ldflags
+	Version = "dev"
+	// BuildDate is set at build time via ldflags
+	BuildDate = "unknown"
 )
 
 func main() {
-	admin.UiData = uiData
-	base.APP_VER = appVer
-	base.CommitId = commitId
-	base.BuildDate = buildDate
+	var (
+		confFile string
+		showVersion bool
+	)
 
-	base.Start()
-	handler.Start()
+	flag.StringVar(&confFile, "c", "conf/server.toml", "config file path")
+	flag.BoolVar(&showVersion, "v", false, "show version")
+	flag.Parse()
 
-	signalWatch()
-}
+	if showVersion {
+		fmt.Printf("AnyLink Server\nVersion: %s\nBuildDate: %s\n", Version, BuildDate)
+		os.Exit(0)
+	}
 
-func signalWatch() {
-	base.Info("Server pid: ", os.Getpid())
+	// Initialize logger
+	logrus.SetFormatter(&logrus.TextFormatter{
+		FullTimestamp: true,
+		TimestampFormat: "2006-01-02 15:04:05",
+	})
+	logrus.SetOutput(os.Stdout)
 
-	sigs := make(chan os.Signal, 1)
-	signal.Notify(sigs, syscall.SIGINT, syscall.SIGTERM, syscall.SIGALRM, syscall.SIGUSR2)
-	for {
-		sig := <-sigs
-		base.Info("Get signal:", sig)
-		switch sig {
-		case syscall.SIGUSR2:
-			// reload
-			base.Info("Reload")
-		default:
-			// stop
-			base.Info("Stop")
-			handler.Stop()
-			return
+	logrus.Infof("Starting AnyLink Server v%s (built %s)", Version, BuildDate)
+
+	// Load configuration
+	cfg, err := LoadConfig(confFile)
+	if err != nil {
+		logrus.Fatalf("Failed to load config: %v", err)
+	}
+
+	if cfg.LogLevel != "" {
+		level, err := logrus.ParseLevel(cfg.LogLevel)
+		if err != nil {
+			logrus.Warnf("Invalid log level %q, defaulting to info", cfg.LogLevel)
+		} else {
+			logrus.SetLevel(level)
 		}
 	}
+
+	// Initialize and start the server
+	srv, err := NewServer(cfg)
+	if err != nil {
+		logrus.Fatalf("Failed to initialize server: %v", err)
+	}
+
+	if err := srv.Start(); err != nil {
+		logrus.Fatalf("Failed to start server: %v", err)
+	}
+
+	logrus.Infof("AnyLink Server started, listening on %s", cfg.ServerAddr)
+
+	// Wait for termination signal
+	quit := make(chan os.Signal, 1)
+	signal.Notify(quit, syscall.SIGINT, syscall.SIGTERM)
+	<-quit
+
+	logrus.Info("Shutting down server...")
+	if err := srv.Stop(); err != nil {
+		logrus.Errorf("Error during shutdown: %v", err)
+	}
+	logrus.Info("Server stopped")
 }
